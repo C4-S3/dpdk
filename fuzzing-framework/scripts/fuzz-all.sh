@@ -31,40 +31,43 @@ if tmux has-session -t $SESSION 2>/dev/null; then
 fi
 
 echo "[+] Creating new tmux session: $SESSION"
-tmux new-session -d -s $SESSION
+# Create session with a shell in the first window
+tmux new-session -d -s $SESSION -n "Fuzzers"
 
-# Harness A: Descriptor Chain (Main fuzzer)
-tmux send-keys -t $SESSION:0 "cd $ROOT_DIR" C-m
-tmux send-keys -t $SESSION:0 "echo '[Harness A] Descriptor Chain Fuzzer'" C-m
-tmux send-keys -t $SESSION:0 "afl-fuzz -i corpus/seeds/descriptor_chain -o results/findings_descriptor_chain -M fuzzer_descriptor_chain -t ${TIMEOUT}+ -m none -- ./harnesses/descriptor_chain_fuzzer_afl @@" C-m
+# Small delay to ensure session is ready (helps with Wayland/Sway)
+sleep 0.5
 
-# Harness B: Control Queue
+# Harness A: Descriptor Chain (Main fuzzer) - pane 0
+tmux send-keys -t $SESSION:0.0 "cd $ROOT_DIR" C-m
+tmux send-keys -t $SESSION:0.0 "echo '[Harness A] Descriptor Chain Fuzzer'" C-m
+tmux send-keys -t $SESSION:0.0 "afl-fuzz -i corpus/seeds/descriptor_chain -o results/findings_descriptor_chain -M fuzzer_descriptor_chain -t ${TIMEOUT}+ -m none -- ./harnesses/descriptor_chain_fuzzer_afl @@" C-m
+
+# Harness B: Control Queue - pane 1
 tmux split-window -t $SESSION:0 -v
-tmux send-keys -t $SESSION:0.1 "cd $ROOT_DIR" C-m
-tmux send-keys -t $SESSION:0.1 "sleep 2" C-m
+tmux send-keys -t $SESSION:0.1 "cd $ROOT_DIR && sleep 2" C-m
 tmux send-keys -t $SESSION:0.1 "echo '[Harness B] Control Queue Fuzzer'" C-m
 tmux send-keys -t $SESSION:0.1 "afl-fuzz -i corpus/seeds/control_queue -o results/findings_control_queue -M fuzzer_control_queue -t ${TIMEOUT}+ -m none -- ./harnesses/control_queue_fuzzer_afl @@" C-m
 
-# Harness C: Multi-Queue
+# Harness C: Multi-Queue - pane 2
 tmux split-window -t $SESSION:0.0 -h
-tmux send-keys -t $SESSION:0.2 "cd $ROOT_DIR" C-m
-tmux send-keys -t $SESSION:0.2 "sleep 4" C-m
+tmux send-keys -t $SESSION:0.2 "cd $ROOT_DIR && sleep 4" C-m
 tmux send-keys -t $SESSION:0.2 "echo '[Harness C] Multi-Queue Fuzzer'" C-m
 tmux send-keys -t $SESSION:0.2 "afl-fuzz -i corpus/seeds/multiqueue -o results/findings_multiqueue -M fuzzer_multiqueue -t ${TIMEOUT}+ -m none -- ./harnesses/multiqueue_fuzzer_afl @@" C-m
 
-# Harness D: Memory Pressure
+# Harness D: Memory Pressure - pane 3
 tmux split-window -t $SESSION:0.1 -h
-tmux send-keys -t $SESSION:0.3 "cd $ROOT_DIR" C-m
-tmux send-keys -t $SESSION:0.3 "sleep 6" C-m
+tmux send-keys -t $SESSION:0.3 "cd $ROOT_DIR && sleep 6" C-m
 tmux send-keys -t $SESSION:0.3 "echo '[Harness D] Memory Pressure Fuzzer'" C-m
 tmux send-keys -t $SESSION:0.3 "afl-fuzz -i corpus/seeds/memory_pressure -o results/findings_memory_pressure -M fuzzer_memory_pressure -t ${TIMEOUT}+ -m none -- ./harnesses/memory_pressure_fuzzer_afl @@" C-m
 
-# Create new window for Harness E
-tmux new-window -t $SESSION:1
-tmux send-keys -t $SESSION:1 "cd $ROOT_DIR" C-m
-tmux send-keys -t $SESSION:1 "sleep 8" C-m
+# Harness E: Integration - separate window
+tmux new-window -t $SESSION -n "Harness-E"
+tmux send-keys -t $SESSION:1 "cd $ROOT_DIR && sleep 8" C-m
 tmux send-keys -t $SESSION:1 "echo '[Harness E] Integration Fuzzer'" C-m
 tmux send-keys -t $SESSION:1 "afl-fuzz -i corpus/seeds/integration -o results/findings_integration -M fuzzer_integration -t ${TIMEOUT}+ -m none -- ./harnesses/integration_fuzzer_afl @@" C-m
+
+# Return focus to first window
+tmux select-window -t $SESSION:0
 
 echo ""
 echo "[✓] All fuzzers launched in tmux session: $SESSION"
