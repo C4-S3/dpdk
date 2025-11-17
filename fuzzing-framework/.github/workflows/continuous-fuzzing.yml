@@ -1,0 +1,86 @@
+name: Continuous Fuzzing
+
+on:
+  schedule:
+    - cron: '0 0 * * *'  # Daily at midnight UTC
+  workflow_dispatch:      # Manual trigger
+  push:
+    paths:
+      - 'fuzzing-framework/**'
+      - 'lib/vhost/**'
+
+jobs:
+  fuzz-descriptor-chain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240  # 4 hours
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install AFL++
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y afl++ gcc make
+
+      - name: Build harness
+        run: |
+          cd fuzzing-framework
+          afl-clang-fast -fsanitize=address,undefined -g \
+            harnesses/descriptor_chain_fuzzer.c \
+            -o harnesses/descriptor_chain_fuzzer_afl
+
+      - name: Generate seeds
+        run: |
+          cd fuzzing-framework
+          python3 scripts/generate_seeds.py
+
+      - name: Run fuzzing (4 hours)
+        run: |
+          cd fuzzing-framework
+          timeout 14400 afl-fuzz \
+            -i corpus/seeds/descriptor_chain \
+            -o results/findings \
+            -M fuzzer_ci \
+            -t 1000+ \
+            -m none \
+            -- ./harnesses/descriptor_chain_fuzzer_afl @@ || true
+
+      - name: Analyze crashes
+        if: always()
+        run: |
+          cd fuzzing-framework
+          python3 analysis/crash_dedup.py descriptor_chain || true
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: fuzzing-results-descriptor-chain
+          path: fuzzing-framework/results/
+          retention-days: 30
+
+      - name: Check for new crashes
+        if: always()
+        run: |
+          cd fuzzing-framework
+          CRASHES=$(find results/findings/default/crashes -name 'id:*' 2>/dev/null | wc -l)
+          if [ "$CRASHES" -gt 0 ]; then
+            echo "::warning::Found $CRASHES crashes!"
+            exit 1
+          fi
+
+  report-summary:
+    needs: [fuzz-descriptor-chain]
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v3
+
+      - name: Generate summary
+        run: |
+          echo "## Fuzzing Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- **Date:** $(date)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Duration:** 4 hours" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
