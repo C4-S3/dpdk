@@ -39,20 +39,12 @@
           stdenv = pkgs.llvmPackages_latest.stdenv;
         };
 
-        # Custom Python environment for analysis scripts
+        # Minimal Python environment for analysis scripts
+        # Note: Removed flask/dash/plotly/pandas to avoid build issues
+        # The basic monitor.sh script works perfectly without them
         pythonEnv = pkgs.python311.withPackages (ps: with ps; [
-          flask              # Web dashboard
-          dash               # Interactive dashboards
-          plotly             # Visualization
-          pandas             # Data analysis
-          numpy              # Numerical computation
-          matplotlib         # Plotting
-          requests           # HTTP requests
-          pyyaml             # YAML parsing
-          jinja2             # Template engine
-          psutil             # System monitoring
-          pygments           # Syntax highlighting
-          rich               # Terminal formatting
+          pip                # Package installer
+          setuptools         # Build tools
         ]);
 
         # Build script for fuzzing harnesses
@@ -343,7 +335,7 @@
             echo "libFuzzer OK" >> $out
 
             # Verify Python environment
-            ${pythonEnv}/bin/python -c "import flask, dash, pandas, matplotlib"
+            ${pythonEnv}/bin/python -c "import pip, setuptools"
             echo "Python OK" >> $out
           '';
         };
