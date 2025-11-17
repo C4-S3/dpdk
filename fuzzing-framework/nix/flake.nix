@@ -14,25 +14,6 @@
           config.allowUnfree = true;
         };
 
-        # DPDK with debug symbols and sanitizer support
-        dpdk-debug = pkgs.dpdk.overrideAttrs (oldAttrs: {
-          mesonFlags = (oldAttrs.mesonFlags or []) ++ [
-            "-Dbuildtype=debug"
-            "-Db_sanitize=address,undefined"
-            "-Db_lundef=false"  # Allow undefined symbols for sanitizers
-            "-Ddisable_drivers=crypto/*,compress/*,event/*,baseband/*"  # Focus on vhost
-            "-Denable_kmods=false"
-            "-Dexamples="
-            "-Dtests=true"
-          ];
-
-          # Enable maximum debug information
-          env = (oldAttrs.env or {}) // {
-            CFLAGS = "-g3 -O0 -fno-omit-frame-pointer -fsanitize=address,undefined";
-            LDFLAGS = "-fsanitize=address,undefined";
-          };
-        });
-
         # AFL++ with all features
         afl-plus-plus = pkgs.aflplusplus.override {
           # Enable all AFL++ features
@@ -48,6 +29,7 @@
         ]);
 
         # Build script for fuzzing harnesses
+        # Note: Harnesses are standalone and don't link against DPDK
         buildHarness = name: pkgs.writeShellScriptBin "build-${name}" ''
           #!/usr/bin/env bash
           set -euo pipefail
@@ -59,36 +41,18 @@
             -fsanitize=address,undefined \
             -g3 -O2 \
             -fno-omit-frame-pointer \
-            -I${dpdk-debug}/include \
             -I../harnesses \
             harnesses/${name}_fuzzer.c \
-            -L${dpdk-debug}/lib \
-            -ldpdk \
             -o harnesses/${name}_fuzzer_afl
 
-          # libFuzzer version
+          # libFuzzer version (if needed)
           ${pkgs.llvmPackages_latest.clang}/bin/clang \
             -fsanitize=fuzzer,address,undefined \
             -g3 -O1 \
             -fno-omit-frame-pointer \
-            -I${dpdk-debug}/include \
             -I../harnesses \
             harnesses/${name}_fuzzer.c \
-            -L${dpdk-debug}/lib \
-            -ldpdk \
             -o harnesses/${name}_fuzzer_libfuzzer
-
-          # Honggfuzz version
-          ${pkgs.honggfuzz}/bin/hfuzz-clang \
-            -fsanitize=address,undefined \
-            -g3 -O2 \
-            -fno-omit-frame-pointer \
-            -I${dpdk-debug}/include \
-            -I../harnesses \
-            harnesses/${name}_fuzzer.c \
-            -L${dpdk-debug}/lib \
-            -ldpdk \
-            -o harnesses/${name}_fuzzer_hf
 
           echo "[✓] Built all versions of ${name} harness"
         '';
@@ -105,36 +69,20 @@
             llvmPackages_latest.clang  # For libFuzzer
             llvmPackages_latest.llvm   # LLVM tools
 
-            # DPDK and dependencies
-            dpdk-debug
-            numactl
-            libbsd
-            libpcap
-            zlib
-            openssl
-            jansson
+            # Note: DPDK not needed - harnesses are standalone simulations
 
             # Build tools
-            meson
-            ninja
-            pkg-config
-            cmake
             gcc
+            gnumake
             gdb
 
             # Analysis and debugging tools
             valgrind                # Memory error detection
-            rr                      # Record & replay debugger
-            llvmPackages_latest.libllvm  # For symbolization
-            llvmPackages_latest.bintools # addr2line, etc.
+            llvmPackages_latest.bintools # addr2line, llvm-symbolizer
             strace                  # System call tracer
-            ltrace                  # Library call tracer
-            perf-tools              # Performance analysis
-            heaptrack               # Heap profiler
 
             # Coverage tools
             lcov                    # Coverage visualization
-            gcovr                   # Coverage reports
 
             # Python environment for analysis
             pythonEnv
@@ -142,26 +90,10 @@
             # Utilities
             parallel                # GNU parallel for multi-core fuzzing
             tmux                    # Terminal multiplexer
-            screen                  # Alternative terminal multiplexer
             htop                    # System monitor
-            iotop                   # I/O monitor
-            nethogs                 # Network monitor
             jq                      # JSON processor
-            yq                      # YAML processor
             ripgrep                 # Fast grep
-            fd                      # Fast find
             bat                     # Better cat
-            eza                     # Better ls
-            fzf                     # Fuzzy finder
-
-            # Documentation
-            man-pages
-            man-pages-posix
-
-            # Optional: Container/VM tools for isolation
-            docker
-            podman
-            qemu
 
             # Harness build scripts
             (buildHarness "descriptor_chain")
@@ -183,7 +115,6 @@
 
             # Set up environment variables
             export FUZZING_ROOT="$(pwd)"
-            export DPDK_DIR="${dpdk-debug}"
             export PATH="$FUZZING_ROOT/scripts:$PATH"
 
             # AFL++ configuration
@@ -217,7 +148,6 @@
             # Info
             echo "Environment Variables:"
             echo "  FUZZING_ROOT    = $FUZZING_ROOT"
-            echo "  DPDK_DIR        = $DPDK_DIR"
             echo "  AFL_PATH        = $AFL_PATH"
             echo ""
 
@@ -274,27 +204,12 @@
             echo ""
           '';
 
-          # Environment variables for build
-          DPDK_DIR = "${dpdk-debug}";
-          PKG_CONFIG_PATH = "${dpdk-debug}/lib/pkgconfig";
-          LD_LIBRARY_PATH = "${dpdk-debug}/lib";
-
           # Sanitizer configuration
           hardeningDisable = [ "fortify" ];  # Disable fortify for sanitizers
         };
 
         # Package outputs
         packages = {
-          # DPDK with debug symbols
-          dpdk-debug = dpdk-debug;
-
-          # Fuzzing dashboard
-          dashboard = pkgs.writeShellScriptBin "fuzzing-dashboard" ''
-            #!/usr/bin/env bash
-            cd ${self}
-            ${pythonEnv}/bin/python monitoring/dashboard.py "$@"
-          '';
-
           # Crash analyzer
           analyze-crashes = pkgs.writeShellScriptBin "analyze-crashes" ''
             #!/usr/bin/env bash
@@ -305,11 +220,6 @@
 
         # Apps for easy execution
         apps = {
-          dashboard = {
-            type = "app";
-            program = "${self.packages.${system}.dashboard}/bin/fuzzing-dashboard";
-          };
-
           analyze = {
             type = "app";
             program = "${self.packages.${system}.analyze-crashes}/bin/analyze-crashes";
